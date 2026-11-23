@@ -102,7 +102,7 @@ static void _on_sleep_time_clicked(lv_event_t* e) {
 
 static void _on_keyboard_done(lv_event_t* e) {
 	lv_event_code_t code = lv_event_get_code(e);
-	if(code != LV_EVENT_READY && code != LV_EVENT_CANCEL && code != LV_EVENT_DEFOCUSED)
+	if(code != LV_EVENT_READY && code != LV_EVENT_CANCEL)
 	{
 		return;
 	}
@@ -159,30 +159,27 @@ static void _ensure_display_modal(void) {
 	lv_obj_add_event_cb(back, _on_display_close, LV_EVENT_CLICKED, NULL);
 	lv_obj_t* back_label = lv_label_create(back);
 	lv_label_set_text(back_label, LV_SYMBOL_LEFT " Back");
-	lv_obj_set_style_text_color(back_label, lv_color_hex(0xe7ecef),
-								LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_center(back_label);
 
 	lv_obj_t* title = lv_label_create(header);
-	lv_label_set_text(title, "Display");
+	lv_label_set_text(title, "Display Settings");
 	lv_obj_set_style_text_color(title, lv_color_white(),
 								LV_PART_MAIN | LV_STATE_DEFAULT);
-	lv_obj_set_align(title, LV_ALIGN_BOTTOM_MID);
+	lv_obj_align(title, LV_ALIGN_BOTTOM_MID, 0, -5);
 
 	lv_obj_t* brightness_panel = lv_obj_create(s_display_modal);
 	lv_obj_set_size(brightness_panel, 400, 100);
-	lv_obj_set_pos(brightness_panel, 40, 150);
+	lv_obj_set_pos(brightness_panel, CONFIG_LCD_EVB_SCREEN_WIDTH / 2 - 200, CONFIG_LCD_EVB_SCREEN_HEIGHT / 2 - 85 + 130);
 	lv_obj_remove_flag(brightness_panel, LV_OBJ_FLAG_SCROLLABLE);
 
 	lv_obj_t* brightness_title = lv_label_create(brightness_panel);
 	lv_label_set_text(brightness_title, "Brightness");
-	lv_obj_set_align(brightness_title, LV_ALIGN_TOP_LEFT);
+	lv_obj_align(brightness_title, LV_ALIGN_TOP_LEFT, 25, 10);
 
 	s_brightness_cfg = lv_slider_create(brightness_panel);
 	lv_slider_set_range(s_brightness_cfg, 1, 100);
 	lv_obj_set_size(s_brightness_cfg, 250, 10);
-	lv_obj_set_align(s_brightness_cfg, LV_ALIGN_CENTER);
-	lv_obj_set_y(s_brightness_cfg, 10);
+	lv_obj_align(s_brightness_cfg, LV_ALIGN_CENTER, 0, 0);
 	lv_obj_set_style_bg_color(s_brightness_cfg, lv_color_hex(0x363636),
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_color(s_brightness_cfg, lv_color_hex(0x529D53),
@@ -193,27 +190,25 @@ static void _ensure_display_modal(void) {
 						LV_EVENT_VALUE_CHANGED, NULL);
 
 	lv_obj_t* low_label = lv_label_create(brightness_panel);
-	lv_label_set_text(low_label, "-");
-	lv_obj_set_align(low_label, LV_ALIGN_LEFT_MID);
-	lv_obj_set_y(low_label, 10);
+	lv_label_set_text(low_label, "↓");
+	lv_obj_align(low_label, LV_ALIGN_LEFT_MID, -5, 0);
 
 	lv_obj_t* high_label = lv_label_create(brightness_panel);
-	lv_label_set_text(high_label, "+");
-	lv_obj_set_align(high_label, LV_ALIGN_RIGHT_MID);
-	lv_obj_set_y(high_label, 10);
+	lv_label_set_text(high_label, "↑");
+	lv_obj_align(high_label, LV_ALIGN_RIGHT_MID, 5, 0);
 
 	lv_obj_t* sleep_panel = lv_obj_create(s_display_modal);
 	lv_obj_set_size(sleep_panel, 400, 50);
-	lv_obj_set_pos(sleep_panel, 40, 270);
+	lv_obj_set_pos(sleep_panel, CONFIG_LCD_EVB_SCREEN_WIDTH / 2 - 200, CONFIG_LCD_EVB_SCREEN_HEIGHT / 2 - 85 + 310);
 	lv_obj_remove_flag(sleep_panel, LV_OBJ_FLAG_SCROLLABLE);
 
 	lv_obj_t* sleep_title = lv_label_create(sleep_panel);
 	lv_label_set_text(sleep_title, "Sleep Mode");
-	lv_obj_set_align(sleep_title, LV_ALIGN_LEFT_MID);
+	lv_obj_align(sleep_title, LV_ALIGN_TOP_LEFT, 25, 10);
 
 	s_sleep_mode_cfg = lv_switch_create(sleep_panel);
 	lv_obj_set_size(s_sleep_mode_cfg, 50, 25);
-	lv_obj_set_align(s_sleep_mode_cfg, LV_ALIGN_RIGHT_MID);
+	lv_obj_align(s_sleep_mode_cfg, LV_ALIGN_RIGHT_MID, 0, 0);
 	lv_obj_set_style_bg_color(s_sleep_mode_cfg, lv_color_hex(0x363636),
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
 	lv_obj_set_style_bg_color(s_sleep_mode_cfg, lv_color_hex(0x529D53),
@@ -222,21 +217,20 @@ static void _ensure_display_modal(void) {
 						LV_EVENT_VALUE_CHANGED, NULL);
 
 	s_sleep_mode_time_panel = lv_obj_create(s_display_modal);
-	lv_obj_set_size(s_sleep_mode_time_panel, 400, 50);
-	lv_obj_set_pos(s_sleep_mode_time_panel, 40, 335);
-	lv_obj_remove_flag(s_sleep_mode_time_panel, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_set_size(sleep_panel, 400, 50);
+	lv_obj_set_pos(sleep_panel, CONFIG_LCD_EVB_SCREEN_WIDTH / 2 - 200, CONFIG_LCD_EVB_SCREEN_HEIGHT / 2 - 85 + 370);
+	lv_obj_remove_flag(sleep_panel, LV_OBJ_FLAG_SCROLLABLE);
 
-	lv_obj_t* after_label = lv_label_create(s_sleep_mode_time_panel);
+	lv_obj_t* after_label = lv_label_create(sleep_panel);
 	lv_label_set_text(after_label, "After");
-	lv_obj_set_align(after_label, LV_ALIGN_LEFT_MID);
+	lv_obj_align(after_label, LV_ALIGN_TOP_LEFT, 25, 10);
 
-	s_sleep_mode_time_cfg = lv_textarea_create(s_sleep_mode_time_panel);
+	s_sleep_mode_time_cfg = lv_textarea_create(sleep_panel);
 	lv_obj_set_size(s_sleep_mode_time_cfg, 80, 40);
-	lv_obj_set_align(s_sleep_mode_time_cfg, LV_ALIGN_RIGHT_MID);
-	lv_obj_set_x(s_sleep_mode_time_cfg, -50);
+	lv_obj_align(s_sleep_mode_time_cfg, LV_ALIGN_RIGHT_MID, 0, -1);
 	lv_textarea_set_accepted_chars(s_sleep_mode_time_cfg, "0123456789");
 	lv_textarea_set_max_length(s_sleep_mode_time_cfg, 4);
-	lv_textarea_set_placeholder_text(s_sleep_mode_time_cfg, "1");
+	lv_textarea_set_placeholder_text(s_sleep_mode_time_cfg, "min");
 	lv_textarea_set_one_line(s_sleep_mode_time_cfg, true);
 	lv_obj_set_style_bg_color(s_sleep_mode_time_cfg, lv_color_hex(0x6F6F6F),
 							  LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -245,15 +239,15 @@ static void _ensure_display_modal(void) {
 	lv_obj_add_event_cb(s_sleep_mode_time_cfg, _on_keyboard_done,
 						LV_EVENT_DEFOCUSED, NULL);
 
-	lv_obj_t* min_label = lv_label_create(s_sleep_mode_time_panel);
-	lv_label_set_text(min_label, "min");
-	lv_obj_set_align(min_label, LV_ALIGN_RIGHT_MID);
+	lv_obj_t* min_label = lv_label_create(sleep_panel);
+	lv_label_set_text(min_label, "minutes");
+	lv_obj_align(min_label, LV_ALIGN_TOP_RIGHT, -25, 10);
 
 	s_display_keyboard = lv_keyboard_create(s_display_modal);
 	lv_keyboard_set_mode(s_display_keyboard, LV_KEYBOARD_MODE_NUMBER);
 	lv_keyboard_set_textarea(s_display_keyboard, s_sleep_mode_time_cfg);
-	lv_obj_set_size(s_display_keyboard, 480, 240);
-	lv_obj_set_align(s_display_keyboard, LV_ALIGN_BOTTOM_MID);
+	lv_obj_set_size(s_display_keyboard, CONFIG_LCD_EVB_SCREEN_WIDTH - 40, CONFIG_LCD_EVB_SCREEN_HEIGHT - 350);
+	lv_obj_align(s_display_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
 	lv_obj_add_flag(s_display_keyboard, LV_OBJ_FLAG_HIDDEN);
 	lv_obj_add_event_cb(s_display_keyboard, _on_keyboard_done,
 						LV_EVENT_READY, NULL);
