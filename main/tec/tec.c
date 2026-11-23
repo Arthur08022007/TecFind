@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -374,6 +373,8 @@ static void add_upcoming(struct view_data_tec_departures *out, const tec_static_
 {
     if ((uint16_t)TEC_SCHEDULE_STOP_INDEX(schedule) != selected_stop_index) return;
 
+    int max_items = (int)(sizeof(out->items) / sizeof(out->items[0]));
+
     /* Cherche le prochain passage valide de cet horaire sur les 7 prochains jours */
     for (int day_offset = 0; day_offset < 7; day_offset++) {
         struct tm day_parts = *now_local;
@@ -405,8 +406,8 @@ static void add_upcoming(struct view_data_tec_departures *out, const tec_static_
         /* Déjà passé (avec 60s de tolérance) : on passe au jour suivant */
         if (expected < now - 60) continue;
 
-        /* Si les 4 slots sont déjà pleins avec des bus plus tôt, inutile d'aller plus loin */
-        if (out->count == 4 && out->items[3].departure_epoch <= (int64_t)expected) return;
+        /* Si tous les slots sont déjà pleins avec des bus plus tôt, inutile d'aller plus loin */
+        if (out->count == max_items && out->items[max_items - 1].departure_epoch <= (int64_t)expected) return;
 
         struct tm expected_parts;
         localtime_r(&expected, &expected_parts);
@@ -415,10 +416,10 @@ static void add_upcoming(struct view_data_tec_departures *out, const tec_static_
 
         int position = out->count;
         while (position > 0 && out->items[position - 1].departure_epoch > (int64_t)expected) {
-            if (position < 4) out->items[position] = out->items[position - 1];
+            if (position < max_items) out->items[position] = out->items[position - 1];
             position--;
         }
-        if (position >= 4) return;
+        if (position >= max_items) return;
 
         struct view_data_tec_departure *item = &out->items[position];
         memset(item, 0, sizeof(*item));
@@ -456,7 +457,7 @@ static void add_upcoming(struct view_data_tec_departures *out, const tec_static_
             strlcpy(item->status, "Théorique", sizeof(item->status));
         }
 
-        if (out->count < 4) out->count++;
+        if (out->count < max_items) out->count++;
 
         /* On a trouvé le prochain passage de ce trajet, inutile de tester les jours suivants */
         return;

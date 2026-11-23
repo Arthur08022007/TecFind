@@ -10,6 +10,7 @@ enum start_screen {
 };
 
 #define WIFI_SCAN_LIST_SIZE 15
+#define TEC_MAX_DEPARTURES  12
 
 struct view_data_wifi_st {
     bool is_connected;
@@ -65,7 +66,7 @@ struct view_data_tec_departures {
     char status[96];
     int count;
     bool realtime;
-    struct view_data_tec_departure items[4];
+    struct view_data_tec_departure items[TEC_MAX_DEPARTURES];
 };
 
 enum {
@@ -85,4 +86,3 @@ enum {
     VIEW_EVENT_FACTORY_RESET,
     VIEW_EVENT_SCREEN_CTRL,
 };
-

@@ -25,7 +25,8 @@ LV_FONT_DECLARE(tec_font_bold_30);
 LV_FONT_DECLARE(tec_font_bold_34);
 LV_IMAGE_DECLARE(tec_img_bus);
 
-#define TEC_CARD_COUNT  3
+#define TEC_CARD_COUNT  ((int)(sizeof(((struct view_data_tec_departures *)0)->items) / \
+                               sizeof(((struct view_data_tec_departures *)0)->items[0])))
 #define COLOR_BG        0x141517
 #define COLOR_CARD      0x232427
 #define COLOR_CARD_LINE 0x34363A
@@ -61,6 +62,7 @@ static lv_obj_t *s_stop;
 static lv_obj_t *s_subtitle;
 static lv_obj_t *s_stop_btn;
 static lv_obj_t *s_stop_modal;
+static lv_obj_t *s_list;
 static lv_obj_t *s_message;
 static lv_obj_t *s_footer;
 static lv_obj_t *s_footer_text;
@@ -98,11 +100,10 @@ static lv_obj_t *text(lv_obj_t *parent, const lv_font_t *font, uint32_t color)
     return label;
 }
 
-static void create_card(lv_obj_t *parent, departure_card_t *card, int index)
+static void create_card(lv_obj_t *parent, departure_card_t *card)
 {
     card->card = plain_obj(parent);
-    lv_obj_set_size(card->card, 440, 92);
-    lv_obj_set_pos(card->card, 20, 136 + index * 102);
+    lv_obj_set_size(card->card, lv_pct(100), 92);
     lv_obj_set_style_bg_color(card->card, lv_color_hex(COLOR_CARD), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(card->card, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_color(card->card, lv_color_hex(COLOR_CARD_LINE), LV_PART_MAIN);
@@ -208,8 +209,10 @@ static void render(void)
     }
 
     if (has_departures) {
+        lv_obj_remove_flag(s_list, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(s_message, LV_OBJ_FLAG_HIDDEN);
     } else {
+        lv_obj_add_flag(s_list, LV_OBJ_FLAG_HIDDEN);
         lv_label_set_text(s_message, s_data.status[0] ? s_data.status : "Connexion au flux TEC…");
         lv_obj_remove_flag(s_message, LV_OBJ_FLAG_HIDDEN);
     }
@@ -238,6 +241,15 @@ static void close_stop_modal_cb(lv_event_t *e)
     close_stop_modal();
 }
 
+static void wifi_icon_clicked_cb(lv_event_t *e)
+{
+    (void)e;
+    close_stop_modal();
+    uint8_t screen = SCREEN_WIFI_CONFIG;
+    esp_event_post_to(view_event_handle, VIEW_EVENT_BASE, VIEW_EVENT_SCREEN_START,
+                      &screen, sizeof(screen), 0);
+}
+
 static void select_stop_item_cb(lv_event_t *e)
 {
     uint16_t index = (uint16_t)(uintptr_t)lv_event_get_user_data(e);
@@ -245,6 +257,8 @@ static void select_stop_item_cb(lv_event_t *e)
 
     memset(&s_data, 0, sizeof(s_data));
     s_updated_at = 0;
+    if (s_list) lv_obj_scroll_to_y(s_list, 0, LV_ANIM_OFF);
+
     const char *name = indicator_tec_stop_name(index);
     if (name && name[0]) {
         strlcpy(s_data.stop_name, name, sizeof(s_data.stop_name));
@@ -276,7 +290,6 @@ static void open_stop_selector_cb(lv_event_t *e)
     lv_obj_set_flex_flow(s_stop_modal, LV_FLEX_FLOW_COLUMN);
     lv_obj_remove_flag(s_stop_modal, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_GESTURE_BUBBLE);
 
-    /* En-tête de la modale */
     lv_obj_t *header = lv_obj_create(s_stop_modal);
     lv_obj_remove_style_all(header);
     lv_obj_set_size(header, lv_pct(100), 48);
@@ -300,7 +313,6 @@ static void open_stop_selector_cb(lv_event_t *e)
     lv_label_set_text(lbl_close, LV_SYMBOL_CLOSE);
     lv_obj_center(lbl_close);
 
-    /* Liste déroulante des arrêts */
     lv_obj_t *list = lv_obj_create(s_stop_modal);
     lv_obj_remove_style_all(list);
     lv_obj_set_width(list, lv_pct(100));
@@ -333,10 +345,10 @@ static void open_stop_selector_cb(lv_event_t *e)
         lv_label_set_long_mode(lbl_name, LV_LABEL_LONG_DOT);
         lv_obj_set_flex_grow(lbl_name, 1);
 
-        unsigned int dist = indicator_tec_stop_distance_m((uint16_t)i);
+        int dist = indicator_tec_stop_distance_m((uint16_t)i);
         if (dist > 0) {
             lv_obj_t *lbl_dist = text(item_btn, &tec_font_semibold_16, selected ? 0xFFFFFF : COLOR_MUTED);
-            lv_label_set_text_fmt(lbl_dist, "%u m", dist);
+            lv_label_set_text_fmt(lbl_dist, "%d m", dist);
         }
 
         if (selected) {
@@ -390,10 +402,21 @@ int indicator_tec_view_init(void)
     lv_obj_set_size(status_bar, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(status_bar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(status_bar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(status_bar, 10, LV_PART_MAIN);
-    lv_obj_align(status_bar, LV_ALIGN_TOP_RIGHT, -24, 15);
-    s_wifi = text(status_bar, &lv_font_montserrat_16, COLOR_MUTED);
+    lv_obj_set_style_pad_column(status_bar, 6, LV_PART_MAIN);
+    lv_obj_align(status_bar, LV_ALIGN_TOP_RIGHT, -20, 7);
+
+    lv_obj_t *wifi_btn = lv_button_create(status_bar);
+    lv_obj_remove_style_all(wifi_btn);
+    lv_obj_set_size(wifi_btn, 44, 36);
+    lv_obj_set_style_radius(wifi_btn, 10, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(wifi_btn, lv_color_hex(COLOR_CARD), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(wifi_btn, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_add_event_cb(wifi_btn, wifi_icon_clicked_cb, LV_EVENT_CLICKED, NULL);
+
+    s_wifi = text(wifi_btn, &lv_font_montserrat_16, COLOR_MUTED);
     lv_label_set_text(s_wifi, LV_SYMBOL_WIFI);
+    lv_obj_center(s_wifi);
+
     s_clock = text(status_bar, &tec_font_semibold_16, COLOR_MUTED);
     lv_label_set_text(s_clock, "--:--");
 
@@ -432,7 +455,19 @@ int indicator_tec_view_init(void)
         lv_obj_center(btn_icon);
     }
 
-    for (int i = 0; i < TEC_CARD_COUNT; i++) create_card(tile, &s_cards[i], i);
+    s_list = lv_obj_create(tile);
+    lv_obj_remove_style_all(s_list);
+    lv_obj_set_size(s_list, 440, 304);
+    lv_obj_set_pos(s_list, 20, 136);
+    lv_obj_set_flex_flow(s_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(s_list, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(s_list, 8, LV_PART_MAIN);
+    lv_obj_add_flag(s_list, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(s_list, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(s_list, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_add_flag(s_list, LV_OBJ_FLAG_GESTURE_BUBBLE);
+
+    for (int i = 0; i < TEC_CARD_COUNT; i++) create_card(s_list, &s_cards[i]);
 
     s_message = text(tile, &tec_font_bold_24, COLOR_MUTED);
     lv_obj_set_width(s_message, 400);
