@@ -340,16 +340,14 @@ int indicator_tec_view_init(void)
     lv_obj_set_style_text_letter_space(brand, 1, LV_PART_MAIN);
     lv_obj_set_pos(brand, 24, 16);
 
-    lv_obj_t *status_bar = plain_obj(tile);
-    lv_obj_set_size(status_bar, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(status_bar, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(status_bar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(status_bar, 10, LV_PART_MAIN);
-    lv_obj_align(status_bar, LV_ALIGN_TOP_RIGHT, -24, 15);
-    s_wifi = text(status_bar, &lv_font_montserrat_16, COLOR_MUTED);
-    lv_label_set_text(s_wifi, LV_SYMBOL_WIFI);
-    s_clock = text(status_bar, &tec_font_semibold_16, COLOR_MUTED);
+    s_clock = text(tile, &tec_font_semibold_16, COLOR_MUTED);
     lv_label_set_text(s_clock, "--:--");
+    lv_obj_set_width(s_clock, 56);
+    lv_obj_set_style_text_align(s_clock, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+    lv_obj_align(s_clock, LV_ALIGN_TOP_RIGHT, -24, 16);
+    s_wifi = text(tile, &lv_font_montserrat_14, COLOR_MUTED);
+    lv_label_set_text(s_wifi, LV_SYMBOL_WIFI);
+    lv_obj_align(s_wifi, LV_ALIGN_TOP_RIGHT, -24 - 56 - 14, 18);
 
     lv_obj_t *icon = lv_image_create(tile);
     lv_image_set_src(icon, &tec_img_bus);
@@ -358,24 +356,24 @@ int indicator_tec_view_init(void)
     s_stop = text(tile, &tec_font_bold_30, COLOR_TEXT);
     lv_label_set_text(s_stop, indicator_tec_stop_name(indicator_tec_selected_stop()));
     lv_obj_set_pos(s_stop, 104, 52);
-    lv_obj_set_width(s_stop, 352);
+    lv_obj_set_size(s_stop, 352, lv_font_get_line_height(&tec_font_bold_30));
     lv_label_set_long_mode(s_stop, LV_LABEL_LONG_DOT);
 
     s_subtitle = text(tile, &tec_font_regular_18, COLOR_MUTED);
-    lv_obj_set_pos(s_subtitle, 104, 92);
-    lv_obj_set_width(s_subtitle, 352);
+    lv_obj_set_pos(s_subtitle, 104, 98);
+    lv_obj_set_size(s_subtitle, 352, lv_font_get_line_height(&tec_font_regular_18));
     lv_label_set_long_mode(s_subtitle, LV_LABEL_LONG_DOT);
 
     if (indicator_tec_stop_count() > 1) {
-        lv_obj_set_width(s_subtitle, 252);
+        lv_obj_set_width(s_subtitle, 244);
         lv_obj_t *change = plain_obj(tile);
-        lv_obj_set_size(change, 92, 30);
-        lv_obj_set_pos(change, 364, 90);
+        lv_obj_set_size(change, 92, 28);
+        lv_obj_set_pos(change, 364, 96);
         lv_obj_set_style_bg_color(change, lv_color_hex(COLOR_CARD), LV_PART_MAIN);
         lv_obj_set_style_bg_opa(change, LV_OPA_COVER, LV_PART_MAIN);
         lv_obj_set_style_border_color(change, lv_color_hex(COLOR_CARD_LINE), LV_PART_MAIN);
         lv_obj_set_style_border_width(change, 1, LV_PART_MAIN);
-        lv_obj_set_style_radius(change, 15, LV_PART_MAIN);
+        lv_obj_set_style_radius(change, 14, LV_PART_MAIN);
         lv_obj_t *change_label = text(change, &tec_font_semibold_16, COLOR_TEXT);
         lv_label_set_text(change_label, "Changer");
         lv_obj_center(change_label);
