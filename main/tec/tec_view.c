@@ -29,6 +29,7 @@ LV_IMAGE_DECLARE(tec_img_bus);
 #define COLOR_CANCELLED 0xFF5A5F
 #define SOON_MINUTES    5
 
+
 typedef struct {
     lv_obj_t *card;
     lv_obj_t *badge;
