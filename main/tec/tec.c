@@ -382,7 +382,8 @@ static void add_upcoming(struct view_data_tec_departures *out, const tec_static_
     /* GTFS times are relative to noon minus 12 h of the service day and may exceed 24:00. */
     time_t scheduled = service_noon - 12 * 3600 + schedule->departure_seconds;
     if (scheduled < now - 60) return;
-    if (out->count >= 4 && (int64_t)scheduled - TEC_MAX_DELAY_SECONDS > out->items[3].departure_epoch) return;
+    if (out->count >= TEC_MAX_DEPARTURES &&
+        (int64_t)scheduled - TEC_MAX_DELAY_SECONDS > out->items[TEC_MAX_DEPARTURES - 1].departure_epoch) return;
     if (!service_active(schedule->service_id, service_day)) return;
 
     bool near_now = scheduled - now < TEC_REALTIME_WINDOW_SECONDS && now - scheduled < TEC_REALTIME_WINDOW_SECONDS;
@@ -396,10 +397,10 @@ static void add_upcoming(struct view_data_tec_departures *out, const tec_static_
     strftime(expected_text, sizeof(expected_text), "%H:%M", &expected_parts);
     int position = out->count;
     while (position > 0 && out->items[position - 1].departure_epoch > (int64_t)expected) {
-        if (position < 4) out->items[position] = out->items[position - 1];
+        if (position < TEC_MAX_DEPARTURES) out->items[position] = out->items[position - 1];
         position--;
     }
-    if (position >= 4) return;
+    if (position >= TEC_MAX_DEPARTURES) return;
     struct view_data_tec_departure *item = &out->items[position];
     memset(item, 0, sizeof(*item));
     utf8_copy(item->line, schedule->line, sizeof(item->line));
@@ -414,7 +415,7 @@ static void add_upcoming(struct view_data_tec_departures *out, const tec_static_
         snprintf(item->status, sizeof(item->status), "Retard +%d min", (realtime.delay_seconds + 30) / 60);
     else if (realtime.found) strlcpy(item->status, "Temps réel", sizeof(item->status));
     else day_label(item->status, sizeof(item->status), &expected_parts, now);
-    if (out->count < 4) out->count++;
+    if (out->count < TEC_MAX_DEPARTURES) out->count++;
 }
 
 static void refresh_screen(bool realtime_ok)
@@ -434,7 +435,7 @@ static void refresh_screen(bool realtime_ok)
         service_day.tm_min = service_day.tm_sec = 0;
         service_day.tm_isdst = -1;
         time_t service_noon = mktime(&service_day);
-        if (data.count >= 4 && data.items[3].departure_epoch + TEC_MAX_DELAY_SECONDS < service_noon - 12 * 3600)
+        if (data.count >= TEC_MAX_DEPARTURES && data.items[TEC_MAX_DEPARTURES - 1].departure_epoch + TEC_MAX_DELAY_SECONDS < service_noon - 12 * 3600)
             break;
         for (int i = 0; i < TEC_STATIC_DEPARTURE_COUNT; i++)
             add_upcoming(&data, &TEC_STATIC_DEPARTURES[i], &service_day, service_noon, now, realtime_ok,

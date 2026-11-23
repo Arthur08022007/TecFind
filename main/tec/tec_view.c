@@ -17,7 +17,8 @@ LV_FONT_DECLARE(tec_font_bold_30);
 LV_FONT_DECLARE(tec_font_bold_34);
 LV_IMAGE_DECLARE(tec_img_bus);
 
-#define TEC_CARD_COUNT 3
+#define TEC_CARD_COUNT TEC_MAX_DEPARTURES
+#define LIST_TOP 128
 #define COLOR_BG        0x141517
 #define COLOR_CARD      0x232427
 #define COLOR_CARD_LINE 0x34363A
@@ -55,6 +56,7 @@ static lv_obj_t *s_footer;
 static lv_obj_t *s_footer_text;
 static departure_card_t s_cards[TEC_CARD_COUNT];
 static lv_obj_t *s_picker;
+static lv_obj_t *s_list;
 
 static uint32_t line_color(const struct view_data_tec_departure *item)
 {
@@ -92,7 +94,7 @@ static void create_card(lv_obj_t *parent, departure_card_t *card, int index)
 {
     card->card = plain_obj(parent);
     lv_obj_set_size(card->card, 440, 92);
-    lv_obj_set_pos(card->card, 20, 136 + index * 102);
+    (void)index;
     lv_obj_set_style_bg_color(card->card, lv_color_hex(COLOR_CARD), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(card->card, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_color(card->card, lv_color_hex(COLOR_CARD_LINE), LV_PART_MAIN);
@@ -144,6 +146,7 @@ static void render_card(departure_card_t *card, const struct view_data_tec_depar
     lv_label_set_text(card->detail, detail);
     uint32_t detail_color = item->cancelled ? COLOR_CANCELLED : item->delayed ? COLOR_LATE : COLOR_MUTED;
     lv_obj_set_style_text_color(card->detail, lv_color_hex(detail_color), LV_PART_MAIN);
+
 
     long seconds = (long)(item->departure_epoch - now);
     long minutes = seconds > 0 ? seconds / 60 : 0;
@@ -216,6 +219,13 @@ static void tick(lv_timer_t *timer)
     render();
 }
 
+static void wifi_open(lv_event_t *event)
+{
+    (void)event;
+    uint8_t screen = SCREEN_WIFI_CONFIG;
+    esp_event_post_to(view_event_handle, VIEW_EVENT_BASE, VIEW_EVENT_SCREEN_START, &screen, sizeof(screen), 0);
+}
+
 static void picker_close(lv_event_t *event)
 {
     (void)event;
@@ -245,6 +255,7 @@ static void stop_option_selected(lv_event_t *event)
     strlcpy(s_data.stop_name, indicator_tec_stop_name(index), sizeof(s_data.stop_name));
     strlcpy(s_data.status, "Mise à jour des horaires…", sizeof(s_data.status));
     s_updated_at = 0;
+    lv_obj_scroll_to_y(s_list, 0, LV_ANIM_OFF);
     render();
 }
 
@@ -348,6 +359,11 @@ int indicator_tec_view_init(void)
     s_wifi = text(tile, &lv_font_montserrat_16, COLOR_MUTED);
     lv_label_set_text(s_wifi, LV_SYMBOL_WIFI);
     lv_obj_align(s_wifi, LV_ALIGN_TOP_RIGHT, -24 - 56 - 14, 17);
+    lv_obj_t *wifi_hit = plain_obj(tile);
+    lv_obj_add_flag(wifi_hit, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(wifi_hit, 56, 44);
+    lv_obj_align(wifi_hit, LV_ALIGN_TOP_RIGHT, -24 - 56 - 14 + 18, 4);
+    lv_obj_add_event_cb(wifi_hit, wifi_open, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *icon = lv_image_create(tile);
     lv_image_set_src(icon, &tec_img_bus);
@@ -360,7 +376,7 @@ int indicator_tec_view_init(void)
     lv_label_set_long_mode(s_stop, LV_LABEL_LONG_DOT);
 
     s_subtitle = text(tile, &tec_font_regular_18, COLOR_MUTED);
-    lv_obj_set_pos(s_subtitle, 104, 98);
+    lv_obj_set_pos(s_subtitle, 104, 91);
     lv_obj_set_size(s_subtitle, 352, lv_font_get_line_height(&tec_font_regular_18));
     lv_label_set_long_mode(s_subtitle, LV_LABEL_LONG_DOT);
 
@@ -368,7 +384,7 @@ int indicator_tec_view_init(void)
         lv_obj_set_width(s_subtitle, 244);
         lv_obj_t *change = plain_obj(tile);
         lv_obj_set_size(change, 92, 28);
-        lv_obj_set_pos(change, 364, 96);
+        lv_obj_set_pos(change, 364, 88);
         lv_obj_set_style_bg_color(change, lv_color_hex(COLOR_CARD), LV_PART_MAIN);
         lv_obj_set_style_bg_opa(change, LV_OPA_COVER, LV_PART_MAIN);
         lv_obj_set_style_border_color(change, lv_color_hex(COLOR_CARD_LINE), LV_PART_MAIN);
@@ -381,12 +397,24 @@ int indicator_tec_view_init(void)
         /* The whole header (icon, stop name, subtitle, pill) opens the picker. */
         lv_obj_t *header_hit = plain_obj(tile);
         lv_obj_add_flag(header_hit, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_size(header_hit, 456, 76);
+        lv_obj_set_size(header_hit, 456, LIST_TOP - 52);
         lv_obj_set_pos(header_hit, 12, 48);
         lv_obj_add_event_cb(header_hit, picker_open, LV_EVENT_CLICKED, NULL);
     }
 
-    for (int i = 0; i < TEC_CARD_COUNT; i++) create_card(tile, &s_cards[i], i);
+    s_list = plain_obj(tile);
+    lv_obj_add_flag(s_list, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(s_list, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_set_size(s_list, 480, 480 - LIST_TOP - 44);
+    lv_obj_set_pos(s_list, 0, LIST_TOP);
+    lv_obj_set_flex_flow(s_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(s_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_top(s_list, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(s_list, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(s_list, 10, LV_PART_MAIN);
+    lv_obj_set_scroll_dir(s_list, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(s_list, LV_SCROLLBAR_MODE_ACTIVE);
+    for (int i = 0; i < TEC_CARD_COUNT; i++) create_card(s_list, &s_cards[i], i);
 
     s_message = text(tile, &tec_font_bold_24, COLOR_MUTED);
     lv_obj_set_width(s_message, 400);
