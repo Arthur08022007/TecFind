@@ -1,0 +1,9 @@
+menu "TecFind"
+
+config TEC_API_KEY
+	string "Belgian Mobility API key"
+	default ""
+	help
+	  API key sent in the bmc-partner-key HTTPS header. Keep sdkconfig local.
+
+endmenu
