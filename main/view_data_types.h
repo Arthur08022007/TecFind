@@ -51,9 +51,10 @@ struct view_data_display {
 
 struct view_data_tec_departure {
     char line[12];
-    char destination[28];
+    char destination[56];
     char time[8];
     char status[20];
+    int minutes_until;
     bool cancelled;
 };
 
@@ -61,7 +62,7 @@ struct view_data_tec_departures {
     char stop_name[96];
     char status[48];
     int count;
-    struct view_data_tec_departure items[4];
+    struct view_data_tec_departure items[3];
 };
 
 enum {
