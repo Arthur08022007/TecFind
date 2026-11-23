@@ -24,6 +24,10 @@ Les horaires locaux viennent de GTFS. Le firmware les combine directement avec l
 
 Pour changer d’arrêt après le démarrage, touche son nom en haut de l’écran puis sélectionne un arrêt dans la liste. La distance affichée est la distance à vol d’oiseau depuis les coordonnées données au générateur.
 
+## Interface
+
+L’écran affiche les trois prochains départs sous forme de cartes (numéro de ligne coloré, destination, heure et minutes restantes). Les polices Inter incluent les accents et la ponctuation française; pour les régénérer : `./tools/gen_fonts.sh` (nécessite `lv_font_conv`). L’icône du bus est générée par `python3 tools/gen_bus_icon.py`.
+
 ## Sources
 
 - [Catalogue officiel des données TEC](https://data.belgianmobility.io/fr/data.html?agency=tec)
