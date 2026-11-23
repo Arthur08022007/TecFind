@@ -10,6 +10,14 @@
 #include "tec_internal.h"
 #include "view_data.h"
 
+#if __has_include("tec_schedule_generated.h")
+#include "tec_schedule_generated.h"
+#endif
+
+#ifndef TEC_GENERATED_STOP_NAME
+#define TEC_GENERATED_STOP_NAME "Arrêt TEC"
+#endif
+
 LV_FONT_DECLARE(tec_font_semibold_16);
 LV_FONT_DECLARE(tec_font_regular_18);
 LV_FONT_DECLARE(tec_font_bold_24);
@@ -17,10 +25,11 @@ LV_FONT_DECLARE(tec_font_bold_30);
 LV_FONT_DECLARE(tec_font_bold_34);
 LV_IMAGE_DECLARE(tec_img_bus);
 
-#define TEC_CARD_COUNT 3
+#define TEC_CARD_COUNT  3
 #define COLOR_BG        0x141517
 #define COLOR_CARD      0x232427
 #define COLOR_CARD_LINE 0x34363A
+#define COLOR_ACCENT    0x2F6BFF
 #define COLOR_TEXT      0xF5F6F7
 #define COLOR_MUTED     0x8E9299
 #define COLOR_DIM       0x5F636A
@@ -28,7 +37,6 @@ LV_IMAGE_DECLARE(tec_img_bus);
 #define COLOR_LATE      0xFF9F0A
 #define COLOR_CANCELLED 0xFF5A5F
 #define SOON_MINUTES    5
-
 
 typedef struct {
     lv_obj_t *card;
@@ -46,10 +54,13 @@ static const uint32_t LINE_PALETTE[] = {
 
 static struct view_data_tec_departures s_data;
 static time_t s_updated_at;
+static lv_obj_t *s_tile;
 static lv_obj_t *s_clock;
 static lv_obj_t *s_wifi;
 static lv_obj_t *s_stop;
 static lv_obj_t *s_subtitle;
+static lv_obj_t *s_stop_btn;
+static lv_obj_t *s_stop_modal;
 static lv_obj_t *s_message;
 static lv_obj_t *s_footer;
 static lv_obj_t *s_footer_text;
@@ -178,7 +189,11 @@ static void render(void)
         lv_label_set_text(s_clock, "--:--");
     }
 
-    lv_label_set_text(s_stop, s_data.stop_name[0] ? s_data.stop_name : TEC_GENERATED_STOP_NAME);
+    const char *current_name = indicator_tec_stop_name(indicator_tec_selected_stop());
+    const char *stop_title = s_data.stop_name[0] ? s_data.stop_name :
+                             (current_name && current_name[0]) ? current_name : TEC_GENERATED_STOP_NAME;
+    lv_label_set_text(s_stop, stop_title);
+
     bool has_departures = s_data.count > 0;
     lv_label_set_text(s_subtitle, !has_departures ? "Prochains départs" :
                       s_data.realtime ? "Départs en temps réel" : "Horaires planifiés");
@@ -209,13 +224,138 @@ static void render(void)
     lv_obj_remove_flag(s_footer, LV_OBJ_FLAG_HIDDEN);
 }
 
+static void close_stop_modal(void)
+{
+    if (s_stop_modal) {
+        lv_obj_delete(s_stop_modal);
+        s_stop_modal = NULL;
+    }
+}
+
+static void close_stop_modal_cb(lv_event_t *e)
+{
+    (void)e;
+    close_stop_modal();
+}
+
+static void select_stop_item_cb(lv_event_t *e)
+{
+    uint16_t index = (uint16_t)(uintptr_t)lv_event_get_user_data(e);
+    close_stop_modal();
+
+    memset(&s_data, 0, sizeof(s_data));
+    s_updated_at = 0;
+    const char *name = indicator_tec_stop_name(index);
+    if (name && name[0]) {
+        strlcpy(s_data.stop_name, name, sizeof(s_data.stop_name));
+    }
+    strlcpy(s_data.status, "Chargement des horaires…", sizeof(s_data.status));
+    render();
+
+    indicator_tec_select_stop(index);
+}
+
+static void open_stop_selector_cb(lv_event_t *e)
+{
+    (void)e;
+    if (s_stop_modal || !s_tile) return;
+
+    size_t count = indicator_tec_stop_count();
+    if (count == 0) return;
+
+    uint16_t current = indicator_tec_selected_stop();
+
+    s_stop_modal = lv_obj_create(s_tile);
+    lv_obj_remove_style_all(s_stop_modal);
+    lv_obj_set_size(s_stop_modal, 480, 480);
+    lv_obj_set_pos(s_stop_modal, 0, 0);
+    lv_obj_set_style_bg_color(s_stop_modal, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_stop_modal, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_stop_modal, 20, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(s_stop_modal, 14, LV_PART_MAIN);
+    lv_obj_set_flex_flow(s_stop_modal, LV_FLEX_FLOW_COLUMN);
+    lv_obj_remove_flag(s_stop_modal, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_GESTURE_BUBBLE);
+
+    /* En-tête de la modale */
+    lv_obj_t *header = lv_obj_create(s_stop_modal);
+    lv_obj_remove_style_all(header);
+    lv_obj_set_size(header, lv_pct(100), 48);
+    lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(header, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t *title = text(header, &tec_font_bold_24, COLOR_TEXT);
+    lv_label_set_text(title, "Choisir un arrêt");
+
+    lv_obj_t *btn_close = lv_button_create(header);
+    lv_obj_remove_style_all(btn_close);
+    lv_obj_set_size(btn_close, 44, 44);
+    lv_obj_set_style_bg_color(btn_close, lv_color_hex(COLOR_CARD), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(btn_close, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(btn_close, lv_color_hex(COLOR_CARD_LINE), LV_PART_MAIN);
+    lv_obj_set_style_border_width(btn_close, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(btn_close, 12, LV_PART_MAIN);
+    lv_obj_add_event_cb(btn_close, close_stop_modal_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *lbl_close = text(btn_close, &lv_font_montserrat_16, COLOR_TEXT);
+    lv_label_set_text(lbl_close, LV_SYMBOL_CLOSE);
+    lv_obj_center(lbl_close);
+
+    /* Liste déroulante des arrêts */
+    lv_obj_t *list = lv_obj_create(s_stop_modal);
+    lv_obj_remove_style_all(list);
+    lv_obj_set_width(list, lv_pct(100));
+    lv_obj_set_flex_grow(list, 1);
+    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(list, 10, LV_PART_MAIN);
+    lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(list, LV_DIR_VER);
+    lv_obj_remove_flag(list, LV_OBJ_FLAG_GESTURE_BUBBLE);
+
+    for (size_t i = 0; i < count; i++) {
+        bool selected = (i == current);
+
+        lv_obj_t *item_btn = lv_button_create(list);
+        lv_obj_remove_style_all(item_btn);
+        lv_obj_set_size(item_btn, lv_pct(100), 64);
+        lv_obj_set_style_bg_color(item_btn, lv_color_hex(selected ? COLOR_ACCENT : COLOR_CARD), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(item_btn, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_border_color(item_btn, lv_color_hex(selected ? COLOR_ACCENT : COLOR_CARD_LINE), LV_PART_MAIN);
+        lv_obj_set_style_border_width(item_btn, 1, LV_PART_MAIN);
+        lv_obj_set_style_radius(item_btn, 14, LV_PART_MAIN);
+        lv_obj_set_style_pad_hor(item_btn, 16, LV_PART_MAIN);
+        lv_obj_set_style_pad_column(item_btn, 12, LV_PART_MAIN);
+        lv_obj_set_flex_flow(item_btn, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(item_btn, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_add_event_cb(item_btn, select_stop_item_cb, LV_EVENT_CLICKED, (void *)(uintptr_t)i);
+
+        lv_obj_t *lbl_name = text(item_btn, &tec_font_regular_18, selected ? 0xFFFFFF : COLOR_TEXT);
+        lv_label_set_text(lbl_name, indicator_tec_stop_name((uint16_t)i));
+        lv_label_set_long_mode(lbl_name, LV_LABEL_LONG_DOT);
+        lv_obj_set_flex_grow(lbl_name, 1);
+
+        unsigned int dist = indicator_tec_stop_distance_m((uint16_t)i);
+        if (dist > 0) {
+            lv_obj_t *lbl_dist = text(item_btn, &tec_font_semibold_16, selected ? 0xFFFFFF : COLOR_MUTED);
+            lv_label_set_text_fmt(lbl_dist, "%u m", dist);
+        }
+
+        if (selected) {
+            lv_obj_t *lbl_ok = text(item_btn, &lv_font_montserrat_16, 0xFFFFFF);
+            lv_label_set_text(lbl_ok, LV_SYMBOL_OK);
+        }
+    }
+}
+
 static void tick(lv_timer_t *timer)
 {
+    (void)timer;
     render();
 }
 
 static void tec_event_handler(void *arg, esp_event_base_t base, int32_t id, void *event_data)
 {
+    (void)arg;
+    (void)base;
     if (event_data == NULL) return;
     lv_port_sem_take();
     if (id == VIEW_EVENT_TEC_DEPARTURES) {
@@ -238,6 +378,7 @@ int indicator_tec_view_init(void)
         lv_port_sem_give();
         return -1;
     }
+    s_tile = tile;
     lv_obj_set_style_bg_color(tile, lv_color_hex(COLOR_BG), LV_PART_MAIN);
 
     lv_obj_t *brand = text(tile, &tec_font_semibold_16, COLOR_DIM);
@@ -260,16 +401,36 @@ int indicator_tec_view_init(void)
     lv_image_set_src(icon, &tec_img_bus);
     lv_obj_set_pos(icon, 24, 54);
 
+    bool can_switch_stop = indicator_tec_stop_count() > 1;
+    lv_coord_t title_width = can_switch_stop ? 276 : 352;
+
     s_stop = text(tile, &tec_font_bold_30, COLOR_TEXT);
     lv_label_set_text(s_stop, TEC_GENERATED_STOP_NAME);
     lv_obj_set_pos(s_stop, 104, 52);
-    lv_obj_set_width(s_stop, 352);
+    lv_obj_set_width(s_stop, title_width);
     lv_label_set_long_mode(s_stop, LV_LABEL_LONG_DOT);
 
     s_subtitle = text(tile, &tec_font_regular_18, COLOR_MUTED);
     lv_obj_set_pos(s_subtitle, 104, 92);
-    lv_obj_set_width(s_subtitle, 352);
+    lv_obj_set_width(s_subtitle, title_width);
     lv_label_set_long_mode(s_subtitle, LV_LABEL_LONG_DOT);
+
+    if (can_switch_stop) {
+        s_stop_btn = lv_button_create(tile);
+        lv_obj_remove_style_all(s_stop_btn);
+        lv_obj_set_size(s_stop_btn, 64, 56);
+        lv_obj_set_pos(s_stop_btn, 392, 54);
+        lv_obj_set_style_bg_color(s_stop_btn, lv_color_hex(COLOR_CARD), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(s_stop_btn, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_border_color(s_stop_btn, lv_color_hex(COLOR_CARD_LINE), LV_PART_MAIN);
+        lv_obj_set_style_border_width(s_stop_btn, 1, LV_PART_MAIN);
+        lv_obj_set_style_radius(s_stop_btn, 14, LV_PART_MAIN);
+        lv_obj_add_event_cb(s_stop_btn, open_stop_selector_cb, LV_EVENT_CLICKED, NULL);
+
+        lv_obj_t *btn_icon = text(s_stop_btn, &lv_font_montserrat_16, COLOR_TEXT);
+        lv_label_set_text(btn_icon, LV_SYMBOL_GPS);
+        lv_obj_center(btn_icon);
+    }
 
     for (int i = 0; i < TEC_CARD_COUNT; i++) create_card(tile, &s_cards[i], i);
 

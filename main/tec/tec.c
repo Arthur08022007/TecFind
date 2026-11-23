@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,7 +20,7 @@
 #include "tec_schedule_generated.h"
 #if !defined(TEC_STOP_COUNT)
 /* Keep an already-generated single-stop table usable until it is regenerated. */
-typedef struct { const char *stop_id; const char *name; unsigned int distance_m; } tec_stop_t;
+typedef struct { const char *stop_id; const char *stop_name; int distance_m; } tec_stop_t;
 static const tec_stop_t TEC_STOPS[] = {{TEC_GENERATED_STOP_ID, TEC_GENERATED_STOP_NAME, 0}};
 #define TEC_STOP_COUNT 1
 #define TEC_SCHEDULE_STOP_INDEX(schedule) 0
@@ -27,10 +28,12 @@ static const tec_stop_t TEC_STOPS[] = {{TEC_GENERATED_STOP_ID, TEC_GENERATED_STO
 #define TEC_SCHEDULE_STOP_INDEX(schedule) ((schedule)->stop_index)
 #endif
 #else
-typedef struct { const char *stop_id; const char *name; unsigned int distance_m; } tec_stop_t;
+typedef struct { const char *stop_id; const char *stop_name; int distance_m; } tec_stop_t;
 typedef struct { unsigned short stop_index; const char *trip_id; const char *service_id; const char *line; const char *destination; int departure_seconds; } tec_static_departure_t;
 typedef struct { const char *service_id; const char *start_date; const char *end_date; unsigned char weekdays; } tec_service_calendar_t;
 typedef struct { const char *service_id; const char *date; unsigned char added; } tec_service_exception_t;
+#define TEC_GENERATED_STOP_ID ""
+#define TEC_GENERATED_STOP_NAME "Arrêt TEC"
 #define TEC_STOP_COUNT 0
 #define TEC_STATIC_DEPARTURE_COUNT 0
 #define TEC_SERVICE_CALENDAR_COUNT 0
@@ -58,13 +61,20 @@ static const char *TAG = "tec";
 typedef struct { char *data; size_t length; bool too_large; } response_buffer_t;
 typedef struct { char trip_id[96]; bool found; bool cancelled; bool has_stop_update; int delay_seconds; int64_t expected_epoch; } realtime_trip_t;
 typedef struct { uint32_t number; uint8_t wire; uint64_t integer; const uint8_t *bytes; size_t length; } protobuf_field_t;
+
 static realtime_trip_t s_realtime[TEC_MAX_REALTIME_TRIPS];
 static size_t s_realtime_count;
+static TaskHandle_t s_tec_task_handle;
+static uint16_t s_selected_stop;
 
 /* strlcpy that never cuts a UTF-8 sequence in half (a split "é" renders as garbage). */
 static void utf8_copy(char *dst, const char *src, size_t size)
 {
     if (size == 0) return;
+    if (!src) {
+        dst[0] = '\0';
+        return;
+    }
     size_t n = strlen(src);
     if (n >= size) {
         n = size - 1;
@@ -72,6 +82,78 @@ static void utf8_copy(char *dst, const char *src, size_t size)
     }
     memcpy(dst, src, n);
     dst[n] = '\0';
+}
+
+static const char *selected_stop_id(void)
+{
+    uint16_t index = s_selected_stop;
+    return index < TEC_STOP_COUNT ? TEC_STOPS[index].stop_id : "";
+}
+
+static const char *selected_stop_name(void)
+{
+    uint16_t index = s_selected_stop;
+    if (index < TEC_STOP_COUNT && TEC_STOPS[index].stop_name && TEC_STOPS[index].stop_name[0]) {
+        return TEC_STOPS[index].stop_name;
+    }
+    return TEC_GENERATED_STOP_NAME;
+}
+
+uint16_t indicator_tec_selected_stop(void)
+{
+    return s_selected_stop;
+}
+
+size_t indicator_tec_stop_count(void)
+{
+    return TEC_STOP_COUNT;
+}
+
+const char *indicator_tec_stop_name(uint16_t index)
+{
+    return index < TEC_STOP_COUNT ? TEC_STOPS[index].stop_name : "";
+}
+
+unsigned int indicator_tec_stop_distance_m(uint16_t index)
+{
+    return index < TEC_STOP_COUNT ? (unsigned int)TEC_STOPS[index].distance_m : 0;
+}
+
+void indicator_tec_select_stop(uint16_t index)
+{
+    if (index >= TEC_STOP_COUNT) return;
+    s_selected_stop = index;
+
+    nvs_handle_t nvs;
+    if (nvs_open(TEC_NVS_NAMESPACE, NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_set_str(nvs, TEC_NVS_STOP_KEY, TEC_STOPS[index].stop_id);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+    }
+    if (s_tec_task_handle) {
+        xTaskNotifyGive(s_tec_task_handle);
+    }
+}
+
+static void load_selected_stop(void)
+{
+    s_selected_stop = 0;
+    if (TEC_STOP_COUNT == 0) return;
+
+    nvs_handle_t nvs;
+    if (nvs_open(TEC_NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) return;
+
+    char saved_id[64] = {0};
+    size_t len = sizeof(saved_id);
+    if (nvs_get_str(nvs, TEC_NVS_STOP_KEY, saved_id, &len) == ESP_OK) {
+        for (uint16_t i = 0; i < TEC_STOP_COUNT; i++) {
+            if (strcmp(TEC_STOPS[i].stop_id, saved_id) == 0) {
+                s_selected_stop = i;
+                break;
+            }
+        }
+    }
+    nvs_close(nvs);
 }
 
 static int32_t schedule_line_color(const tec_static_departure_t *schedule)
@@ -164,12 +246,6 @@ static bool ids_match(const char *feed_id, const char *static_id)
     if (strcmp(feed_id, static_id) == 0) return true;
     size_t a = strlen(feed_id), b = strlen(static_id);
     return a > b && strcmp(feed_id + a - b, static_id) == 0;
-}
-
-static const char *selected_stop_id(void)
-{
-    uint16_t index = indicator_tec_selected_stop();
-    return index < TEC_STOP_COUNT ? TEC_STOPS[index].stop_id : "";
 }
 
 static void parse_trip_descriptor(const uint8_t *data, size_t size, realtime_trip_t *trip)
@@ -296,51 +372,102 @@ static void add_upcoming(struct view_data_tec_departures *out, const tec_static_
                          const struct tm *now_local, time_t now, bool realtime_ok,
                          uint16_t selected_stop_index)
 {
-    if (TEC_SCHEDULE_STOP_INDEX(schedule) != selected_stop_index) return;
-    if (!service_active(schedule->service_id, now_local)) return;
-    struct tm scheduled_parts = *now_local;
-    scheduled_parts.tm_hour = schedule->departure_seconds / 3600;
-    scheduled_parts.tm_min = (schedule->departure_seconds % 3600) / 60;
-    scheduled_parts.tm_sec = schedule->departure_seconds % 60;
-    scheduled_parts.tm_isdst = -1;
-    time_t scheduled = mktime(&scheduled_parts);
-    if (scheduled < now - 60 || scheduled > now + 7200) return;
+    if ((uint16_t)TEC_SCHEDULE_STOP_INDEX(schedule) != selected_stop_index) return;
 
-    realtime_trip_t realtime = find_realtime(schedule->trip_id, realtime_ok);
-    time_t expected = realtime.expected_epoch ? (time_t)realtime.expected_epoch :
-                      scheduled + (realtime.found ? realtime.delay_seconds : 0);
-    if (expected < now - 60) return;
-    struct tm expected_parts;
-    localtime_r(&expected, &expected_parts);
-    char expected_text[8];
-    strftime(expected_text, sizeof(expected_text), "%H:%M", &expected_parts);
-    int position = out->count;
-    while (position > 0 && out->items[position - 1].departure_epoch > (int64_t)expected) {
-        if (position < 4) out->items[position] = out->items[position - 1];
-        position--;
+    /* Cherche le prochain passage valide de cet horaire sur les 7 prochains jours */
+    for (int day_offset = 0; day_offset < 7; day_offset++) {
+        struct tm day_parts = *now_local;
+        day_parts.tm_mday += day_offset;
+        day_parts.tm_hour = 12; /* Midi évite les pièges du changement d'heure (DST) */
+        day_parts.tm_min = 0;
+        day_parts.tm_sec = 0;
+        day_parts.tm_isdst = -1;
+        mktime(&day_parts); /* Normalise tm_wday, tm_mon, tm_year */
+
+        if (!service_active(schedule->service_id, &day_parts)) continue;
+
+        struct tm scheduled_parts = day_parts;
+        scheduled_parts.tm_hour = schedule->departure_seconds / 3600;
+        scheduled_parts.tm_min = (schedule->departure_seconds % 3600) / 60;
+        scheduled_parts.tm_sec = schedule->departure_seconds % 60;
+        scheduled_parts.tm_isdst = -1;
+        time_t scheduled = mktime(&scheduled_parts);
+
+        /* Temps réel uniquement applicable aux départs proches (moins de 12h) */
+        realtime_trip_t realtime = {0};
+        if (scheduled - now < 43200) {
+            realtime = find_realtime(schedule->trip_id, realtime_ok);
+        }
+
+        time_t expected = realtime.expected_epoch ? (time_t)realtime.expected_epoch :
+                          scheduled + (realtime.found ? realtime.delay_seconds : 0);
+
+        /* Déjà passé (avec 60s de tolérance) : on passe au jour suivant */
+        if (expected < now - 60) continue;
+
+        /* Si les 4 slots sont déjà pleins avec des bus plus tôt, inutile d'aller plus loin */
+        if (out->count == 4 && out->items[3].departure_epoch <= (int64_t)expected) return;
+
+        struct tm expected_parts;
+        localtime_r(&expected, &expected_parts);
+        char expected_text[8];
+        strftime(expected_text, sizeof(expected_text), "%H:%M", &expected_parts);
+
+        int position = out->count;
+        while (position > 0 && out->items[position - 1].departure_epoch > (int64_t)expected) {
+            if (position < 4) out->items[position] = out->items[position - 1];
+            position--;
+        }
+        if (position >= 4) return;
+
+        struct view_data_tec_departure *item = &out->items[position];
+        memset(item, 0, sizeof(*item));
+        utf8_copy(item->line, schedule->line, sizeof(item->line));
+        utf8_copy(item->destination, schedule->destination, sizeof(item->destination));
+        strlcpy(item->time, expected_text, sizeof(item->time));
+        item->departure_epoch = expected;
+        item->line_color = schedule_line_color(schedule);
+        item->cancelled = realtime.cancelled;
+        item->delayed = !realtime.cancelled && realtime.found && realtime.delay_seconds >= 60;
+
+        bool is_today = (expected_parts.tm_yday == now_local->tm_yday &&
+                         expected_parts.tm_year == now_local->tm_year);
+
+        if (realtime.cancelled) {
+            strlcpy(item->status, "Supprimé", sizeof(item->status));
+        } else if (item->delayed) {
+            snprintf(item->status, sizeof(item->status), "Retard +%d min", (realtime.delay_seconds + 30) / 60);
+        } else if (realtime.found) {
+            strlcpy(item->status, "Temps réel", sizeof(item->status));
+        } else if (!is_today) {
+            /* Indique le jour (ex: "Demain" ou "Lun 25/11") si ce n'est pas aujourd'hui */
+            time_t tomorrow_t = now + 86400;
+            struct tm tomorrow_parts;
+            localtime_r(&tomorrow_t, &tomorrow_parts);
+            if (expected_parts.tm_yday == tomorrow_parts.tm_yday &&
+                expected_parts.tm_year == tomorrow_parts.tm_year) {
+                strlcpy(item->status, "Demain", sizeof(item->status));
+            } else {
+                static const char *DAYS[] = {"Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"};
+                snprintf(item->status, sizeof(item->status), "%s %02d/%02d",
+                         DAYS[expected_parts.tm_wday], expected_parts.tm_mday, expected_parts.tm_mon + 1);
+            }
+        } else {
+            strlcpy(item->status, "Théorique", sizeof(item->status));
+        }
+
+        if (out->count < 4) out->count++;
+
+        /* On a trouvé le prochain passage de ce trajet, inutile de tester les jours suivants */
+        return;
     }
-    if (position >= 4) return;
-    struct view_data_tec_departure *item = &out->items[position];
-    memset(item, 0, sizeof(*item));
-    utf8_copy(item->line, schedule->line, sizeof(item->line));
-    utf8_copy(item->destination, schedule->destination, sizeof(item->destination));
-    strlcpy(item->time, expected_text, sizeof(item->time));
-    item->departure_epoch = expected;
-    item->line_color = schedule_line_color(schedule);
-    item->cancelled = realtime.cancelled;
-    item->delayed = !realtime.cancelled && realtime.found && realtime.delay_seconds >= 60;
-    if (realtime.cancelled) strlcpy(item->status, "Supprimé", sizeof(item->status));
-    else if (item->delayed)
-        snprintf(item->status, sizeof(item->status), "Retard +%d min", (realtime.delay_seconds + 30) / 60);
-    else if (realtime.found) strlcpy(item->status, "Temps réel", sizeof(item->status));
-    else strlcpy(item->status, "Théorique", sizeof(item->status));
-    if (out->count < 4) out->count++;
 }
 
 static void refresh_screen(bool realtime_ok)
 {
+    uint16_t selected_stop_index = indicator_tec_selected_stop();
     struct view_data_tec_departures data = {0};
-    utf8_copy(data.stop_name, TEC_GENERATED_STOP_NAME, sizeof(data.stop_name));
+    utf8_copy(data.stop_name, selected_stop_name(), sizeof(data.stop_name));
     data.realtime = realtime_ok;
     time_t now = time(NULL);
     struct tm local;
@@ -354,7 +481,7 @@ static void refresh_screen(bool realtime_ok)
     else
         strlcpy(data.status, "Horaires planifiés · flux temps réel indisponible", sizeof(data.status));
     if (data.count == 0 && TEC_STOP_COUNT)
-        strlcpy(data.status, "Aucun bus prévu dans les deux prochaines heures", sizeof(data.status));
+        strlcpy(data.status, "Aucun bus prévu dans les 7 prochains jours", sizeof(data.status));
     tec_view_update(&data);
 }
 
@@ -369,15 +496,15 @@ static void tec_task(void *arg)
         wifi_ap_record_t ap = {0};
         if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
             struct view_data_tec_departures empty = {.status = "Wi-Fi non connecté"};
-            utf8_copy(empty.stop_name, TEC_GENERATED_STOP_NAME, sizeof(empty.stop_name));
+            utf8_copy(empty.stop_name, selected_stop_name(), sizeof(empty.stop_name));
             tec_view_update(&empty);
         } else if (!CONFIG_TEC_API_KEY[0]) {
             struct view_data_tec_departures empty = {.status = "Saisissez la clé API avec idf.py menuconfig"};
-            utf8_copy(empty.stop_name, TEC_GENERATED_STOP_NAME, sizeof(empty.stop_name));
+            utf8_copy(empty.stop_name, selected_stop_name(), sizeof(empty.stop_name));
             tec_view_update(&empty);
         } else if (time(NULL) < 1735689600) {
             struct view_data_tec_departures empty = {.status = "Synchronisation de l’heure…"};
-            utf8_copy(empty.stop_name, TEC_GENERATED_STOP_NAME, sizeof(empty.stop_name));
+            utf8_copy(empty.stop_name, selected_stop_name(), sizeof(empty.stop_name));
             tec_view_update(&empty);
         } else {
             response_buffer_t body = {0};
