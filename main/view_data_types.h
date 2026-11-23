@@ -60,12 +60,14 @@ struct view_data_tec_departure {
     bool delayed;
 };
 
+#define TEC_MAX_DEPARTURES 10
+
 struct view_data_tec_departures {
-    char stop_name[64];
+    char stop_name[96];
     char status[96];
     int count;
     bool realtime;
-    struct view_data_tec_departure items[4];
+    struct view_data_tec_departure items[TEC_MAX_DEPARTURES];
 };
 
 enum {

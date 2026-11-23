@@ -8,10 +8,6 @@
 #include "nav.h"
 #include "sdkconfig.h"
 
-LV_IMAGE_DECLARE(ui_img_wifi_1_png);
-LV_IMAGE_DECLARE(ui_img_wifi_2_png);
-LV_IMAGE_DECLARE(ui_img_wifi_3_png);
-LV_IMAGE_DECLARE(ui_img_wifi_disconet_png);
 
 static const char *TAG = "wifi-view";
 
@@ -19,7 +15,6 @@ static wifi_list_screen_t    *s_list_screen    = NULL;
 static wifi_connect_screen_t *s_connect_screen = NULL;
 static lv_obj_t              *s_wifi_modal     = NULL;
 static lv_obj_t              *s_wifi_spinner   = NULL;
-static lv_obj_t              *s_wifi_icon      = NULL;
 
 static void _on_connected_tap(lv_event_t *e);
 static void _on_unconnected_tap(lv_event_t *e);
@@ -127,35 +122,6 @@ static void _show_wifi_modal(void) {
                       VIEW_EVENT_WIFI_LIST_REQ, NULL, 0, portMAX_DELAY);
 }
 
-static void _on_wifi_icon_clicked(lv_event_t *e) {
-    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    _show_wifi_modal();
-}
-
-static void _ensure_wifi_status_icon(void) {
-    if(s_wifi_icon) return;
-
-    lv_obj_t *tile = nav_get_tile(NAV_TILE_TEC);
-    if(!tile) return;
-
-    lv_obj_t *button = lv_button_create(tile);
-    lv_obj_set_size(button, 60, 60);
-    lv_obj_set_align(button, LV_ALIGN_TOP_RIGHT);
-    lv_obj_set_pos(button, -10, 10);
-    lv_obj_remove_flag(button, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(button, lv_color_hex(0x101418),
-                              LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(button, LV_OPA_COVER,
-                            LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_add_event_cb(button, _on_wifi_icon_clicked, LV_EVENT_CLICKED, NULL);
-
-    s_wifi_icon = lv_image_create(button);
-    lv_image_set_src(s_wifi_icon, &ui_img_wifi_disconet_png);
-    lv_obj_center(s_wifi_icon);
-    lv_obj_add_flag(s_wifi_icon, LV_OBJ_FLAG_ADV_HITTEST);
-    lv_obj_remove_flag(s_wifi_icon, LV_OBJ_FLAG_SCROLLABLE);
-}
-
 /* ── list item tap callbacks (live here to access module state) ───────── */
 
 static void _on_unconnected_tap(lv_event_t *e) {
@@ -220,27 +186,6 @@ static void _view_event_handler(void *handler_args, esp_event_base_t base,
                 _show_wifi_modal();
                 lv_port_sem_give();
             }
-            break;
-        }
-        case VIEW_EVENT_WIFI_ST: {
-            struct view_data_wifi_st *p_st = (struct view_data_wifi_st *)event_data;
-            const void *src = &ui_img_wifi_disconet_png;
-
-            if(p_st->is_connected) {
-                switch(wifi_rssi_level_get(p_st->rssi)) {
-                    case 1: src = &ui_img_wifi_1_png; break;
-                    case 2: src = &ui_img_wifi_2_png; break;
-                    case 3: src = &ui_img_wifi_3_png; break;
-                    default: break;
-                }
-            }
-
-            lv_port_sem_take();
-            _ensure_wifi_status_icon();
-            if(s_wifi_icon) {
-                lv_image_set_src(s_wifi_icon, src);
-            }
-            lv_port_sem_give();
             break;
         }
         case VIEW_EVENT_WIFI_LIST_START:
@@ -308,14 +253,6 @@ static void _view_event_handler(void *handler_args, esp_event_base_t base,
 /* ── init ────────────────────────────────────────────────────────────── */
 
 int indicator_wifi_view_init(void) {
-    lv_port_sem_take();
-    _ensure_wifi_status_icon();
-    lv_port_sem_give();
-
-    ESP_ERROR_CHECK(esp_event_handler_instance_register_with(
-        view_event_handle, VIEW_EVENT_BASE, VIEW_EVENT_WIFI_ST,
-        _view_event_handler, NULL, NULL));
-
     ESP_ERROR_CHECK(esp_event_handler_instance_register_with(
         view_event_handle, VIEW_EVENT_BASE, VIEW_EVENT_WIFI_LIST,
         _view_event_handler, NULL, NULL));

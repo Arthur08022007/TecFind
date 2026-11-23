@@ -6,12 +6,8 @@
 #include "esp_log.h"
 #include "lv_port.h"
 #include "nav.h"
+#include "tec.h"
 #include "tec_internal.h"
-#if __has_include("tec_schedule_generated.h")
-#include "tec_schedule_generated.h"
-#else
-#define TEC_GENERATED_STOP_NAME "Arrêt TEC"
-#endif
 #include "view_data.h"
 
 LV_FONT_DECLARE(tec_font_semibold_16);
@@ -21,7 +17,8 @@ LV_FONT_DECLARE(tec_font_bold_30);
 LV_FONT_DECLARE(tec_font_bold_34);
 LV_IMAGE_DECLARE(tec_img_bus);
 
-#define TEC_CARD_COUNT 3
+#define TEC_CARD_COUNT TEC_MAX_DEPARTURES
+#define LIST_TOP 128
 #define COLOR_BG        0x141517
 #define COLOR_CARD      0x232427
 #define COLOR_CARD_LINE 0x34363A
@@ -31,6 +28,7 @@ LV_IMAGE_DECLARE(tec_img_bus);
 #define COLOR_SOON      0x34C759
 #define COLOR_LATE      0xFF9F0A
 #define COLOR_CANCELLED 0xFF5A5F
+#define COLOR_ACCENT    0x2F6BFF
 #define SOON_MINUTES    5
 
 typedef struct {
@@ -57,6 +55,8 @@ static lv_obj_t *s_message;
 static lv_obj_t *s_footer;
 static lv_obj_t *s_footer_text;
 static departure_card_t s_cards[TEC_CARD_COUNT];
+static lv_obj_t *s_picker;
+static lv_obj_t *s_list;
 
 static uint32_t line_color(const struct view_data_tec_departure *item)
 {
@@ -94,7 +94,7 @@ static void create_card(lv_obj_t *parent, departure_card_t *card, int index)
 {
     card->card = plain_obj(parent);
     lv_obj_set_size(card->card, 440, 92);
-    lv_obj_set_pos(card->card, 20, 136 + index * 102);
+    (void)index;
     lv_obj_set_style_bg_color(card->card, lv_color_hex(COLOR_CARD), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(card->card, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_color(card->card, lv_color_hex(COLOR_CARD_LINE), LV_PART_MAIN);
@@ -147,6 +147,7 @@ static void render_card(departure_card_t *card, const struct view_data_tec_depar
     uint32_t detail_color = item->cancelled ? COLOR_CANCELLED : item->delayed ? COLOR_LATE : COLOR_MUTED;
     lv_obj_set_style_text_color(card->detail, lv_color_hex(detail_color), LV_PART_MAIN);
 
+
     long seconds = (long)(item->departure_epoch - now);
     long minutes = seconds > 0 ? seconds / 60 : 0;
     char minutes_text[16];
@@ -181,7 +182,8 @@ static void render(void)
         lv_label_set_text(s_clock, "--:--");
     }
 
-    lv_label_set_text(s_stop, s_data.stop_name[0] ? s_data.stop_name : TEC_GENERATED_STOP_NAME);
+    lv_label_set_text(s_stop, s_data.stop_name[0] ? s_data.stop_name :
+                      indicator_tec_stop_name(indicator_tec_selected_stop()));
     bool has_departures = s_data.count > 0;
     lv_label_set_text(s_subtitle, !has_departures ? "Prochains départs" :
                       s_data.realtime ? "Départs en temps réel" : "Horaires planifiés");
@@ -217,6 +219,107 @@ static void tick(lv_timer_t *timer)
     render();
 }
 
+static void wifi_open(lv_event_t *event)
+{
+    (void)event;
+    uint8_t screen = SCREEN_WIFI_CONFIG;
+    esp_event_post_to(view_event_handle, VIEW_EVENT_BASE, VIEW_EVENT_SCREEN_START, &screen, sizeof(screen), 0);
+}
+
+static void picker_close(lv_event_t *event)
+{
+    (void)event;
+    lv_obj_add_flag(s_picker, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void picker_open(lv_event_t *event)
+{
+    (void)event;
+    lv_obj_t *list = lv_obj_get_child(s_picker, 1);
+    uint16_t selected = indicator_tec_selected_stop();
+    for (uint32_t i = 0; i < lv_obj_get_child_count(list); i++) {
+        lv_obj_t *option = lv_obj_get_child(list, i);
+        lv_obj_set_style_border_width(option, i == selected ? 2 : 0, LV_PART_MAIN);
+    }
+    lv_obj_remove_flag(s_picker, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_picker);
+}
+
+static void stop_option_selected(lv_event_t *event)
+{
+    uint16_t index = (uint16_t)(uintptr_t)lv_event_get_user_data(event);
+    lv_obj_add_flag(s_picker, LV_OBJ_FLAG_HIDDEN);
+    if (index == indicator_tec_selected_stop() && s_data.count > 0) return;
+    indicator_tec_select_stop(index);
+    memset(&s_data, 0, sizeof(s_data));
+    strlcpy(s_data.stop_name, indicator_tec_stop_name(index), sizeof(s_data.stop_name));
+    strlcpy(s_data.status, "Mise à jour des horaires…", sizeof(s_data.status));
+    s_updated_at = 0;
+    lv_obj_scroll_to_y(s_list, 0, LV_ANIM_OFF);
+    render();
+}
+
+static void create_stop_picker(lv_obj_t *tile)
+{
+    s_picker = plain_obj(tile);
+    lv_obj_add_flag(s_picker, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(s_picker, LV_OBJ_FLAG_GESTURE_BUBBLE | LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_set_size(s_picker, lv_pct(100), lv_pct(100));
+    lv_obj_set_style_bg_color(s_picker, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_picker, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_picker, 20, LV_PART_MAIN);
+    lv_obj_add_flag(s_picker, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t *title = text(s_picker, &tec_font_bold_30, COLOR_TEXT);
+    lv_label_set_text(title, "Choisir un arrêt");
+    lv_obj_set_pos(title, 4, 4);
+
+    lv_obj_t *list = plain_obj(s_picker);
+    lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(list, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_set_size(list, lv_pct(100), 316);
+    lv_obj_set_pos(list, 0, 52);
+    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(list, 8, LV_PART_MAIN);
+    lv_obj_set_scroll_dir(list, LV_DIR_VER);
+
+    for (uint16_t i = 0; i < indicator_tec_stop_count(); i++) {
+        lv_obj_t *option = plain_obj(list);
+        lv_obj_add_flag(option, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_remove_flag(option, LV_OBJ_FLAG_GESTURE_BUBBLE);
+        lv_obj_set_size(option, lv_pct(100), 56);
+        lv_obj_set_style_bg_color(option, lv_color_hex(COLOR_CARD), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(option, lv_color_hex(COLOR_CARD_LINE), LV_PART_MAIN | LV_STATE_PRESSED);
+        lv_obj_set_style_bg_opa(option, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_border_color(option, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+        lv_obj_set_style_radius(option, 12, LV_PART_MAIN);
+        lv_obj_set_style_pad_hor(option, 16, LV_PART_MAIN);
+        lv_obj_add_event_cb(option, stop_option_selected, LV_EVENT_CLICKED, (void *)(uintptr_t)i);
+
+        lv_obj_t *name = text(option, &tec_font_regular_18, COLOR_TEXT);
+        lv_label_set_text(name, indicator_tec_stop_name(i));
+        lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(name, 300);
+        lv_obj_align(name, LV_ALIGN_LEFT_MID, 0, 0);
+
+        lv_obj_t *distance = text(option, &tec_font_semibold_16, COLOR_MUTED);
+        lv_label_set_text_fmt(distance, "%u m", indicator_tec_stop_distance_m(i));
+        lv_obj_align(distance, LV_ALIGN_RIGHT_MID, 0, 0);
+    }
+
+    lv_obj_t *close = plain_obj(s_picker);
+    lv_obj_add_flag(close, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(close, 160, 44);
+    lv_obj_align(close, LV_ALIGN_BOTTOM_MID, 0, 4);
+    lv_obj_set_style_bg_color(close, lv_color_hex(COLOR_CARD_LINE), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(close, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(close, 22, LV_PART_MAIN);
+    lv_obj_add_event_cb(close, picker_close, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *close_label = text(close, &tec_font_semibold_16, COLOR_TEXT);
+    lv_label_set_text(close_label, "Fermer");
+    lv_obj_center(close_label);
+}
+
 static void tec_event_handler(void *arg, esp_event_base_t base, int32_t id, void *event_data)
 {
     if (event_data == NULL) return;
@@ -248,33 +351,70 @@ int indicator_tec_view_init(void)
     lv_obj_set_style_text_letter_space(brand, 1, LV_PART_MAIN);
     lv_obj_set_pos(brand, 24, 16);
 
-    lv_obj_t *status_bar = plain_obj(tile);
-    lv_obj_set_size(status_bar, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(status_bar, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(status_bar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(status_bar, 10, LV_PART_MAIN);
-    lv_obj_align(status_bar, LV_ALIGN_TOP_RIGHT, -24, 15);
-    s_wifi = text(status_bar, &lv_font_montserrat_16, COLOR_MUTED);
-    lv_label_set_text(s_wifi, LV_SYMBOL_WIFI);
-    s_clock = text(status_bar, &tec_font_semibold_16, COLOR_MUTED);
+    s_clock = text(tile, &tec_font_semibold_16, COLOR_MUTED);
     lv_label_set_text(s_clock, "--:--");
+    lv_obj_set_width(s_clock, 56);
+    lv_obj_set_style_text_align(s_clock, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+    lv_obj_align(s_clock, LV_ALIGN_TOP_RIGHT, -24, 16);
+    s_wifi = text(tile, &lv_font_montserrat_16, COLOR_MUTED);
+    lv_label_set_text(s_wifi, LV_SYMBOL_WIFI);
+    lv_obj_align(s_wifi, LV_ALIGN_TOP_RIGHT, -24 - 56 - 14, 17);
+    lv_obj_t *wifi_hit = plain_obj(tile);
+    lv_obj_add_flag(wifi_hit, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(wifi_hit, 56, 44);
+    lv_obj_align(wifi_hit, LV_ALIGN_TOP_RIGHT, -24 - 56 - 14 + 18, 4);
+    lv_obj_add_event_cb(wifi_hit, wifi_open, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *icon = lv_image_create(tile);
     lv_image_set_src(icon, &tec_img_bus);
     lv_obj_set_pos(icon, 24, 54);
 
     s_stop = text(tile, &tec_font_bold_30, COLOR_TEXT);
-    lv_label_set_text(s_stop, TEC_GENERATED_STOP_NAME);
+    lv_label_set_text(s_stop, indicator_tec_stop_name(indicator_tec_selected_stop()));
     lv_obj_set_pos(s_stop, 104, 52);
-    lv_obj_set_width(s_stop, 352);
+    lv_obj_set_size(s_stop, 352, lv_font_get_line_height(&tec_font_bold_30));
     lv_label_set_long_mode(s_stop, LV_LABEL_LONG_DOT);
 
     s_subtitle = text(tile, &tec_font_regular_18, COLOR_MUTED);
-    lv_obj_set_pos(s_subtitle, 104, 92);
-    lv_obj_set_width(s_subtitle, 352);
+    lv_obj_set_pos(s_subtitle, 104, 91);
+    lv_obj_set_size(s_subtitle, 352, lv_font_get_line_height(&tec_font_regular_18));
     lv_label_set_long_mode(s_subtitle, LV_LABEL_LONG_DOT);
 
-    for (int i = 0; i < TEC_CARD_COUNT; i++) create_card(tile, &s_cards[i], i);
+    if (indicator_tec_stop_count() > 1) {
+        lv_obj_set_width(s_subtitle, 244);
+        lv_obj_t *change = plain_obj(tile);
+        lv_obj_set_size(change, 92, 28);
+        lv_obj_set_pos(change, 364, 88);
+        lv_obj_set_style_bg_color(change, lv_color_hex(COLOR_CARD), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(change, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_border_color(change, lv_color_hex(COLOR_CARD_LINE), LV_PART_MAIN);
+        lv_obj_set_style_border_width(change, 1, LV_PART_MAIN);
+        lv_obj_set_style_radius(change, 14, LV_PART_MAIN);
+        lv_obj_t *change_label = text(change, &tec_font_semibold_16, COLOR_TEXT);
+        lv_label_set_text(change_label, "Changer");
+        lv_obj_center(change_label);
+
+        /* The whole header (icon, stop name, subtitle, pill) opens the picker. */
+        lv_obj_t *header_hit = plain_obj(tile);
+        lv_obj_add_flag(header_hit, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_size(header_hit, 456, LIST_TOP - 52);
+        lv_obj_set_pos(header_hit, 12, 48);
+        lv_obj_add_event_cb(header_hit, picker_open, LV_EVENT_CLICKED, NULL);
+    }
+
+    s_list = plain_obj(tile);
+    lv_obj_add_flag(s_list, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(s_list, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_set_size(s_list, 480, 480 - LIST_TOP - 44);
+    lv_obj_set_pos(s_list, 0, LIST_TOP);
+    lv_obj_set_flex_flow(s_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(s_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_top(s_list, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(s_list, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(s_list, 10, LV_PART_MAIN);
+    lv_obj_set_scroll_dir(s_list, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(s_list, LV_SCROLLBAR_MODE_ACTIVE);
+    for (int i = 0; i < TEC_CARD_COUNT; i++) create_card(s_list, &s_cards[i], i);
 
     s_message = text(tile, &tec_font_bold_24, COLOR_MUTED);
     lv_obj_set_width(s_message, 400);
@@ -291,6 +431,8 @@ int indicator_tec_view_init(void)
     lv_obj_t *refresh = text(s_footer, &lv_font_montserrat_16, COLOR_DIM);
     lv_label_set_text(refresh, LV_SYMBOL_REFRESH);
     s_footer_text = text(s_footer, &tec_font_regular_18, COLOR_DIM);
+
+    if (indicator_tec_stop_count() > 1) create_stop_picker(tile);
 
     render();
     lv_timer_create(tick, 5000, NULL);
