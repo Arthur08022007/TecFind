@@ -345,9 +345,9 @@ int indicator_tec_view_init(void)
     lv_obj_set_width(s_clock, 56);
     lv_obj_set_style_text_align(s_clock, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
     lv_obj_align(s_clock, LV_ALIGN_TOP_RIGHT, -24, 16);
-    s_wifi = text(tile, &lv_font_montserrat_14, COLOR_MUTED);
+    s_wifi = text(tile, &lv_font_montserrat_16, COLOR_MUTED);
     lv_label_set_text(s_wifi, LV_SYMBOL_WIFI);
-    lv_obj_align(s_wifi, LV_ALIGN_TOP_RIGHT, -24 - 56 - 14, 18);
+    lv_obj_align(s_wifi, LV_ALIGN_TOP_RIGHT, -24 - 56 - 14, 17);
 
     lv_obj_t *icon = lv_image_create(tile);
     lv_image_set_src(icon, &tec_img_bus);
