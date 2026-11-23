@@ -14,6 +14,9 @@
 #include "view_data.h"
 
 static const char *TAG = "tec-view";
+LV_FONT_DECLARE(tec_font_16);
+LV_FONT_DECLARE(tec_font_24);
+LV_FONT_DECLARE(tec_font_32);
 static lv_obj_t *s_stop;
 static lv_obj_t *s_status;
 static lv_obj_t *s_rows[4];
@@ -63,7 +66,7 @@ int indicator_tec_view_init(void)
     lv_obj_set_width(s_stop, 420);
     lv_label_set_long_mode(s_stop, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_color(s_stop, lv_color_hex(0xF2F5F8), LV_PART_MAIN);
-    lv_obj_set_style_text_font(s_stop, &lv_font_montserrat_32, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_stop, &tec_font_32, LV_PART_MAIN);
 
     lv_obj_t *divider = lv_obj_create(tile);
     lv_obj_set_size(divider, 430, 2);
@@ -79,7 +82,7 @@ int indicator_tec_view_init(void)
         lv_obj_set_width(s_rows[i], 432);
         lv_label_set_long_mode(s_rows[i], LV_LABEL_LONG_DOT);
         lv_obj_set_style_text_color(s_rows[i], lv_color_hex(0xF2F5F8), LV_PART_MAIN);
-        lv_obj_set_style_text_font(s_rows[i], &lv_font_montserrat_24, LV_PART_MAIN);
+        lv_obj_set_style_text_font(s_rows[i], &tec_font_24, LV_PART_MAIN);
     }
 
     s_status = lv_label_create(tile);
@@ -87,7 +90,7 @@ int indicator_tec_view_init(void)
     lv_obj_set_pos(s_status, 24, 387);
     lv_obj_set_width(s_status, 432);
     lv_obj_set_style_text_color(s_status, lv_color_hex(0xFFC857), LV_PART_MAIN);
-    lv_obj_set_style_text_font(s_status, &lv_font_montserrat_16, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_status, &tec_font_16, LV_PART_MAIN);
 
     lv_port_sem_give();
 
