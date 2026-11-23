@@ -23,6 +23,14 @@ def c_string(value):
     return '"' + value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ') + '"'
 
 
+def route_color(route):
+    value = (route.get("route_color") or "").strip().lstrip("#")
+    try:
+        return int(value, 16) if len(value) == 6 else -1
+    except ValueError:
+        return -1
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("latitude", type=float, help="Latitude of the Indicator")
@@ -75,16 +83,17 @@ def main():
         "#pragma once",
         f"#define TEC_GENERATED_STOP_ID {c_string(stop_id)}",
         f"#define TEC_GENERATED_STOP_NAME {c_string(stop['stop_name'])}",
-        "typedef struct { const char *trip_id; const char *service_id; const char *line; const char *destination; int departure_seconds; } tec_static_departure_t;",
+        "#define TEC_GENERATED_HAS_ROUTE_COLOR 1",
+        "typedef struct { const char *trip_id; const char *service_id; const char *line; const char *destination; int departure_seconds; int route_color; } tec_static_departure_t;",
         "typedef struct { const char *service_id; const char *start_date; const char *end_date; unsigned char weekdays; } tec_service_calendar_t;",
         "typedef struct { const char *service_id; const char *date; unsigned char added; } tec_service_exception_t;",
         "static const tec_static_departure_t TEC_STATIC_DEPARTURES[] = {",
     ]
     for trip, route, seconds in sorted(entries, key=lambda entry: entry[2]):
         line = route.get("route_short_name") or route.get("route_long_name") or "TEC"
-        lines.append("  {%s,%s,%s,%s,%d}," % (
+        lines.append("  {%s,%s,%s,%s,%d,%d}," % (
             c_string(trip["trip_id"]), c_string(trip["service_id"]), c_string(line),
-            c_string(trip.get("trip_headsign", "")), seconds))
+            c_string(trip.get("trip_headsign", "")), seconds, route_color(route)))
     lines += ["};", "static const tec_service_calendar_t TEC_SERVICE_CALENDAR[] = {"]
     for service_id, row in calendars.items():
         mask = sum((1 << index) for index, day in enumerate(weekdays) if row.get(day) == "1")

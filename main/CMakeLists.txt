@@ -26,5 +26,5 @@ collect_sources(COLLECTED_SOURCES ${DIRECTORIES_TO_INCLUDE})
 idf_component_register(
   SRCS "main.c" "lv_port.c" "indicator_model.c" "indicator_view.c" ${COLLECTED_SOURCES}
   INCLUDE_DIRS "." ${DIRECTORIES_TO_INCLUDE}
-  REQUIRES esp_http_client mbedtls
+  REQUIRES esp_http_client mbedtls nvs_flash esp_wifi esp_netif esp_timer esp_lcd driver esp_driver_gpio esp_driver_i2c esp_driver_uart lvgl__lvgl espressif__esp_lvgl_port bsp
 )

@@ -22,6 +22,10 @@ Le portail limite l’accès anonyme; en production, une clé API est requise. L
 
 Les horaires locaux viennent de GTFS. Le firmware les combine directement avec les mises à jour TEC GTFS-Realtime pour appliquer les heures estimées, les retards et les annulations. Si le flux temps réel est indisponible, l’écran garde les horaires planifiés et l’indique clairement.
 
+## Interface
+
+L’écran affiche les trois prochains départs sous forme de cartes (numéro de ligne coloré, destination, heure et minutes restantes). Les polices Inter incluent les accents et la ponctuation française; pour les régénérer : `./tools/gen_fonts.sh` (nécessite `lv_font_conv`). L’icône du bus est générée par `python3 tools/gen_bus_icon.py`.
+
 ## Sources
 
 - [Catalogue officiel des données TEC](https://data.belgianmobility.io/fr/data.html?agency=tec)
