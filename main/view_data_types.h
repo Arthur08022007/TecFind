@@ -58,7 +58,7 @@ struct view_data_tec_departure {
 };
 
 struct view_data_tec_departures {
-    char stop_name[40];
+    char stop_name[96];
     char status[48];
     int count;
     struct view_data_tec_departure items[4];

@@ -11,20 +11,32 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "nvs.h"
 #include "tec.h"
 #include "tec_internal.h"
 
 #if __has_include("tec_schedule_generated.h")
 #include "tec_schedule_generated.h"
+#if !defined(TEC_STOP_COUNT)
+/* Keep an already-generated single-stop table usable until it is regenerated. */
+typedef struct { const char *stop_id; const char *name; unsigned int distance_m; } tec_stop_t;
+static const tec_stop_t TEC_STOPS[] = {{TEC_GENERATED_STOP_ID, TEC_GENERATED_STOP_NAME, 0}};
+#define TEC_STOP_COUNT 1
+#define TEC_SCHEDULE_STOP_INDEX(schedule) 0
 #else
-#define TEC_GENERATED_STOP_ID ""
-#define TEC_GENERATED_STOP_NAME "Arrêt TEC"
-typedef struct { const char *trip_id; const char *service_id; const char *line; const char *destination; int departure_seconds; } tec_static_departure_t;
+#define TEC_SCHEDULE_STOP_INDEX(schedule) ((schedule)->stop_index)
+#endif
+#else
+typedef struct { const char *stop_id; const char *name; unsigned int distance_m; } tec_stop_t;
+typedef struct { unsigned short stop_index; const char *trip_id; const char *service_id; const char *line; const char *destination; int departure_seconds; } tec_static_departure_t;
 typedef struct { const char *service_id; const char *start_date; const char *end_date; unsigned char weekdays; } tec_service_calendar_t;
 typedef struct { const char *service_id; const char *date; unsigned char added; } tec_service_exception_t;
+#define TEC_STOP_COUNT 0
 #define TEC_STATIC_DEPARTURE_COUNT 0
 #define TEC_SERVICE_CALENDAR_COUNT 0
 #define TEC_SERVICE_EXCEPTION_COUNT 0
+#define TEC_SCHEDULE_STOP_INDEX(schedule) ((schedule)->stop_index)
+static const tec_stop_t TEC_STOPS[1] = {{0}};
 static const tec_static_departure_t TEC_STATIC_DEPARTURES[1] = {{0}};
 static const tec_service_calendar_t TEC_SERVICE_CALENDAR[1] = {{0}};
 static const tec_service_exception_t TEC_SERVICE_EXCEPTIONS[1] = {{0}};
@@ -38,6 +50,8 @@ static const tec_service_exception_t TEC_SERVICE_EXCEPTIONS[1] = {{0}};
 #define TEC_MAX_FEED_BYTES (1024 * 1024)
 #define TEC_POLL_SECONDS 60
 #define TEC_MAX_REALTIME_TRIPS 1024
+#define TEC_NVS_NAMESPACE "tecfind"
+#define TEC_NVS_STOP_KEY "stop_id"
 
 static const char *TAG = "tec";
 
@@ -46,6 +60,66 @@ typedef struct { char trip_id[96]; bool found; bool cancelled; bool has_stop_upd
 typedef struct { uint32_t number; uint8_t wire; uint64_t integer; const uint8_t *bytes; size_t length; } protobuf_field_t;
 static realtime_trip_t s_realtime[TEC_MAX_REALTIME_TRIPS];
 static size_t s_realtime_count;
+static volatile uint16_t s_selected_stop_index;
+static TaskHandle_t s_tec_task_handle;
+
+size_t indicator_tec_stop_count(void)
+{
+    return TEC_STOP_COUNT;
+}
+
+const char *indicator_tec_stop_name(uint16_t index)
+{
+    return index < TEC_STOP_COUNT ? TEC_STOPS[index].name : "Arrêts non configurés";
+}
+
+unsigned int indicator_tec_stop_distance_m(uint16_t index)
+{
+    return index < TEC_STOP_COUNT ? TEC_STOPS[index].distance_m : 0;
+}
+
+uint16_t indicator_tec_selected_stop(void)
+{
+    return s_selected_stop_index < TEC_STOP_COUNT ? s_selected_stop_index : 0;
+}
+
+void indicator_tec_select_stop(uint16_t index)
+{
+    if (index >= TEC_STOP_COUNT) return;
+    s_selected_stop_index = index;
+
+    nvs_handle_t handle;
+    if (nvs_open(TEC_NVS_NAMESPACE, NVS_READWRITE, &handle) == ESP_OK) {
+        esp_err_t err = nvs_set_str(handle, TEC_NVS_STOP_KEY, TEC_STOPS[index].stop_id);
+        if (err == ESP_OK) err = nvs_commit(handle);
+        if (err != ESP_OK) ESP_LOGW(TAG, "Could not save selected stop: %s", esp_err_to_name(err));
+        nvs_close(handle);
+    }
+
+    if (s_tec_task_handle) xTaskNotifyGive(s_tec_task_handle);
+}
+
+static void load_selected_stop(void)
+{
+    s_selected_stop_index = 0;
+    if (!TEC_STOP_COUNT) return;
+
+    nvs_handle_t handle;
+    if (nvs_open(TEC_NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) return;
+    size_t length = 0;
+    if (nvs_get_str(handle, TEC_NVS_STOP_KEY, NULL, &length) == ESP_OK && length > 0 && length <= 96) {
+        char saved_id[96];
+        if (nvs_get_str(handle, TEC_NVS_STOP_KEY, saved_id, &length) == ESP_OK) {
+            for (uint16_t i = 0; i < TEC_STOP_COUNT; i++) {
+                if (strcmp(saved_id, TEC_STOPS[i].stop_id) == 0) {
+                    s_selected_stop_index = i;
+                    break;
+                }
+            }
+        }
+    }
+    nvs_close(handle);
+}
 
 static esp_err_t http_event(esp_http_client_event_t *event)
 {
@@ -129,6 +203,12 @@ static bool ids_match(const char *feed_id, const char *static_id)
     return a > b && strcmp(feed_id + a - b, static_id) == 0;
 }
 
+static const char *selected_stop_id(void)
+{
+    uint16_t index = indicator_tec_selected_stop();
+    return index < TEC_STOP_COUNT ? TEC_STOPS[index].stop_id : "";
+}
+
 static void parse_trip_descriptor(const uint8_t *data, size_t size, realtime_trip_t *trip)
 {
     size_t pos = 0;
@@ -171,7 +251,7 @@ static void parse_stop_time_update(const uint8_t *data, size_t size, realtime_tr
             stop_id[n] = '\0';
         } else if (field.number == 5 && field.wire == 0) skipped = field.integer == 1;
     }
-    if (!ids_match(stop_id, TEC_GENERATED_STOP_ID)) return;
+    if (!ids_match(stop_id, selected_stop_id())) return;
     trip->has_stop_update = true;
     trip->cancelled |= skipped;
     if (departure_epoch || departure_delay) {
@@ -250,8 +330,10 @@ static bool service_active(const char *service_id, const struct tm *local)
 }
 
 static void add_upcoming(struct view_data_tec_departures *out, const tec_static_departure_t *schedule,
-                         const struct tm *now_local, time_t now, bool realtime_ok)
+                         const struct tm *now_local, time_t now, bool realtime_ok,
+                         uint16_t selected_stop_index)
 {
+    if (TEC_SCHEDULE_STOP_INDEX(schedule) != selected_stop_index) return;
     if (!service_active(schedule->service_id, now_local)) return;
     struct tm scheduled_parts = *now_local;
     scheduled_parts.tm_hour = schedule->departure_seconds / 3600;
@@ -292,19 +374,20 @@ static void add_upcoming(struct view_data_tec_departures *out, const tec_static_
 static void refresh_screen(bool realtime_ok)
 {
     struct view_data_tec_departures data = {0};
-    strlcpy(data.stop_name, TEC_GENERATED_STOP_NAME, sizeof(data.stop_name));
+    uint16_t selected_stop_index = indicator_tec_selected_stop();
+    strlcpy(data.stop_name, indicator_tec_stop_name(selected_stop_index), sizeof(data.stop_name));
     time_t now = time(NULL);
     struct tm local;
     localtime_r(&now, &local);
     for (int i = 0; i < TEC_STATIC_DEPARTURE_COUNT; i++)
-        add_upcoming(&data, &TEC_STATIC_DEPARTURES[i], &local, now, realtime_ok);
-    if (!TEC_STATIC_DEPARTURE_COUNT)
-        strlcpy(data.status, "Lancez tools/find_stop.py avec la position de l’écran", sizeof(data.status));
+        add_upcoming(&data, &TEC_STATIC_DEPARTURES[i], &local, now, realtime_ok, selected_stop_index);
+    if (!TEC_STOP_COUNT)
+        strlcpy(data.status, "Générez la liste des arrêts avec tools/find_stop.py", sizeof(data.status));
     else if (realtime_ok)
         strlcpy(data.status, "Temps réel TEC · Belgian Mobility", sizeof(data.status));
     else
         strlcpy(data.status, "Horaires planifiés · flux temps réel indisponible", sizeof(data.status));
-    if (data.count == 0 && TEC_STATIC_DEPARTURE_COUNT)
+    if (data.count == 0 && TEC_STOP_COUNT)
         strlcpy(data.status, "Aucun bus prévu dans les deux prochaines heures", sizeof(data.status));
     tec_view_update(&data);
 }
@@ -320,15 +403,15 @@ static void tec_task(void *arg)
         wifi_ap_record_t ap = {0};
         if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) {
             struct view_data_tec_departures empty = {.status = "Wi-Fi non connecté"};
-            strlcpy(empty.stop_name, TEC_GENERATED_STOP_NAME, sizeof(empty.stop_name));
+            strlcpy(empty.stop_name, indicator_tec_stop_name(indicator_tec_selected_stop()), sizeof(empty.stop_name));
             tec_view_update(&empty);
         } else if (!CONFIG_TEC_API_KEY[0]) {
             struct view_data_tec_departures empty = {.status = "Saisissez la clé API avec idf.py menuconfig"};
-            strlcpy(empty.stop_name, TEC_GENERATED_STOP_NAME, sizeof(empty.stop_name));
+            strlcpy(empty.stop_name, indicator_tec_stop_name(indicator_tec_selected_stop()), sizeof(empty.stop_name));
             tec_view_update(&empty);
         } else if (time(NULL) < 1735689600) {
             struct view_data_tec_departures empty = {.status = "Synchronisation de l’heure…"};
-            strlcpy(empty.stop_name, TEC_GENERATED_STOP_NAME, sizeof(empty.stop_name));
+            strlcpy(empty.stop_name, indicator_tec_stop_name(indicator_tec_selected_stop()), sizeof(empty.stop_name));
             tec_view_update(&empty);
         } else {
             response_buffer_t body = {0};
@@ -337,12 +420,13 @@ static void tec_task(void *arg)
             refresh_screen(ok);
             heap_caps_free(body.data);
         }
-        vTaskDelay(pdMS_TO_TICKS(TEC_POLL_SECONDS * 1000));
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(TEC_POLL_SECONDS * 1000));
     }
 }
 
 int indicator_tec_init(void)
 {
-    xTaskCreate(tec_task, "tec_poll", 8192, NULL, 4, NULL);
-    return 0;
+    load_selected_stop();
+    BaseType_t created = xTaskCreate(tec_task, "tec_poll", 8192, NULL, 4, &s_tec_task_handle);
+    return created == pdPASS ? 0 : -1;
 }

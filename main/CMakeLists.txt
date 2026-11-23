@@ -27,5 +27,5 @@ idf_component_register(
   SRCS "main.c" "lv_port.c" "indicator_model.c" "indicator_view.c" ${COLLECTED_SOURCES}
   INCLUDE_DIRS "." ${DIRECTORIES_TO_INCLUDE}
   REQUIRES esp_http_client mbedtls
-  PRIV_REQUIRES bsp
+  PRIV_REQUIRES bsp nvs_flash
 )

@@ -2,7 +2,7 @@
 
 Firmware autonome pour Seeed SenseCAP Indicator D1 Pro : affiche les prochains bus TEC directement sur l’écran. Il n’y a ni Home Assistant, ni broker MQTT, ni serveur local requis. L’appareil utilise son Wi-Fi pour interroger l’API Belgian Mobility.
 
-Le D1 Pro n’a pas de GPS. Pour choisir l’arrêt le plus proche, on configure une latitude/longitude à l’installation; l’outil `tools/find_stop.py` télécharge la liste officielle des arrêts, trouve le plus proche et donne son identifiant à saisir dans le menu de configuration ESP-IDF.
+Le D1 Pro n’a pas de GPS. À l’installation, on indique la latitude et la longitude de l’écran. L’outil `tools/find_stop.py` télécharge les horaires TEC et génère la liste des arrêts situés dans un rayon donné. Ensuite, l’arrêt se choisit directement sur l’écran tactile; le choix est mémorisé même après redémarrage.
 
 ## Prérequis
 
@@ -15,12 +15,14 @@ Le portail limite l’accès anonyme; en production, une clé API est requise. L
 
 ## Mise en route
 
-1. Générer les horaires du lieu d’installation avec `python3 tools/find_stop.py LATITUDE LONGITUDE`.
+1. Générer les arrêts et horaires proches avec `python3 tools/find_stop.py LATITUDE LONGITUDE --radius-m 1000 --max-stops 12`. Les 12 arrêts les plus proches dans un rayon de 1 km seront proposés; adapte ces valeurs à ton lieu.
 2. Dans `idf.py menuconfig`, ouvrir **TecFind** et saisir la clé API.
 3. Configurer le Wi-Fi dans l’écran tactile après le démarrage.
 4. Compiler et flasher : `./dev build`, puis `./dev flash`.
 
 Les horaires locaux viennent de GTFS. Le firmware les combine directement avec les mises à jour TEC GTFS-Realtime pour appliquer les heures estimées, les retards et les annulations. Si le flux temps réel est indisponible, l’écran garde les horaires planifiés et l’indique clairement.
+
+Pour changer d’arrêt après le démarrage, touche son nom en haut de l’écran puis sélectionne un arrêt dans la liste. La distance affichée est la distance à vol d’oiseau depuis les coordonnées données au générateur.
 
 ## Sources
 
